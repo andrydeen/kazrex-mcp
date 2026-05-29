@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "biznet": {
+      "command": "node",
+      "args": [
+        "/Users/andrydeen/Projects/KazrexMCP/biznet-mcp-server/dist/index.js"
+      ],
+      "env": {
+        "BIZNET_BASE_URL": "https://cust05.isokonbpm.com",
+        "BIZNET_USERNAME": "ADMIN",
+        "BIZNET_PASSWORD": "REDACTED"
+      }
+    }
+  }
+}

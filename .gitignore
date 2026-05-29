@@ -1,0 +1,23 @@
+# Node
+biznet-mcp-server/node_modules/
+biznet-mcp-server/dist/
+
+# Environment
+.env
+.env.local
+
+# Claude Code internals
+.claude/memory_bank/
+.claude/settings.local.json
+
+# Playwright logs
+.playwright-mcp/
+
+# BizNet web app source (reference only, not needed for deployment)
+biznet/
+
+# OS
+.DS_Store
+
+# Screenshots
+*.png
