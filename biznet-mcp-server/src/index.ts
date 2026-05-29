@@ -849,7 +849,98 @@ async function startHttp(port: number) {
 
   app.get("/health", (_req, res) => res.send("OK"));
 
-  // SSE transport — one session per connection
+  // ─── REST API (for Hermes and other HTTP clients) ─────────────────────────
+
+  app.get("/api/contacts", async (_req, res) => {
+    try {
+      const data = await biznet.get<IdNameItem[]>("/Clients/GetPrimaryList");
+      res.json({ ok: true, data: Array.isArray(data) ? data : [] });
+    } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
+  });
+
+  app.get("/api/contacts/:id", async (req, res) => {
+    try {
+      const data = await biznet.get<ContactDetail>("/Clients/GetClientInfo", { id: req.params.id });
+      res.json({ ok: true, data });
+    } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
+  });
+
+  app.post("/api/contacts/search/phone", async (req, res) => {
+    try {
+      const { phone } = req.body as { phone: string };
+      const data = await biznet.get<IdNameItem[]>("/Clients/GetPrimaryList", { phone });
+      res.json({ ok: true, data: Array.isArray(data) ? data : [] });
+    } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
+  });
+
+  app.post("/api/contacts", async (req, res) => {
+    try {
+      const body = req.body as Record<string, unknown>;
+      const data = await biznet.post<BiznetResponse<unknown>>("/Clients/CreateClient", body);
+      res.json({ ok: data.Status, data: data.Argument, message: data.Message });
+    } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
+  });
+
+  app.patch("/api/contacts/:id", async (req, res) => {
+    try {
+      const body = req.body as Record<string, unknown>;
+      const data = await biznet.post<BiznetResponse<unknown>>("/Clients/UpdateClientInfo", { id: req.params.id, ...body });
+      res.json({ ok: data.Status, data: data.Argument, message: data.Message });
+    } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
+  });
+
+  app.post("/api/contacts/:id/notes", async (req, res) => {
+    try {
+      const { note } = req.body as { note: string };
+      const data = await biznet.post<BiznetResponse<unknown>>("/Clients/AddNote", { id: req.params.id, note });
+      res.json({ ok: data.Status, data: data.Argument, message: data.Message });
+    } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
+  });
+
+  app.get("/api/organizations", async (_req, res) => {
+    try {
+      const data = await biznet.get<IdNameItem[]>("/Clients/GetOrganisationList");
+      res.json({ ok: true, data: Array.isArray(data) ? data : [] });
+    } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
+  });
+
+  app.post("/api/organizations", async (req, res) => {
+    try {
+      const body = req.body as Record<string, unknown>;
+      const data = await biznet.post<BiznetResponse<unknown>>("/Clients/CreateOrganisation", body);
+      res.json({ ok: data.Status, data: data.Argument, message: data.Message });
+    } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
+  });
+
+  app.get("/api/contacts/:id/cases", async (req, res) => {
+    try {
+      const data = await biznet.get<CaseItem[]>("/Cases/GetCaseList", { clientId: req.params.id });
+      res.json({ ok: true, data: Array.isArray(data) ? data : [] });
+    } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
+  });
+
+  app.get("/api/case-types", async (_req, res) => {
+    try {
+      const data = await biznet.get<MatterItem[]>("/Cases/GetMatterList");
+      res.json({ ok: true, data: Array.isArray(data) ? data : [] });
+    } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
+  });
+
+  app.get("/api/users", async (_req, res) => {
+    try {
+      const data = await biznet.get<NameValueItem[]>("/Admin/GetUserList");
+      res.json({ ok: true, data: Array.isArray(data) ? data : [] });
+    } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
+  });
+
+  app.get("/api/lookup/:category", async (req, res) => {
+    try {
+      const data = await biznet.get<NameValueItem[]>("/Config/GetLookupList", { category: req.params.category });
+      res.json({ ok: true, data: Array.isArray(data) ? data : [] });
+    } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
+  });
+
+  // ─── SSE transport — one session per connection
   const transports = new Map<string, SSEServerTransport>();
 
   app.get("/sse", async (_req, res) => {
