@@ -875,16 +875,62 @@ async function startHttp(port: number) {
 
   app.post("/api/contacts", async (req, res) => {
     try {
-      const body = req.body as Record<string, unknown>;
-      const data = await biznet.post<BiznetResponse<unknown>>("/Clients/CreateClient", body);
+      const b = req.body as Record<string, unknown>;
+      const body = {
+        id: 0,
+        type: b.type ?? "",
+        lname: b.lname ?? "",
+        fname: b.fname ?? "",
+        title: b.title ?? "",
+        phone: b.phone ?? "",
+        mobilephone: b.mobilephone ?? "",
+        email: b.email ?? "",
+        fax: b.fax ?? "",
+        organisation: b.organisation ?? 0,
+        department: b.department ?? 0,
+        position: b.position ?? "",
+        clientRef: b.clientRef ?? "",
+        clientStatus: b.clientStatus ?? "",
+        birthday: b.birthday ?? "",
+        marital: b.marital ?? "",
+        facebook: b.facebook ?? "",
+        instagram: b.instagram ?? "",
+        twitter: b.twitter ?? "",
+        linkedin: b.linkedin ?? "",
+        presetId: 0,
+        fillTabs: false,
+      };
+      const data = await biznet.post<BiznetResponse<number>>("/Clients/AddCustomer", body);
       res.json({ ok: data.Status, data: data.Argument, message: data.Message });
     } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
   });
 
   app.patch("/api/contacts/:id", async (req, res) => {
     try {
-      const body = req.body as Record<string, unknown>;
-      const data = await biznet.post<BiznetResponse<unknown>>("/Clients/UpdateClientInfo", { id: req.params.id, ...body });
+      const b = req.body as Record<string, unknown>;
+      const body = {
+        id: Number(req.params.id),
+        type: b.type ?? "",
+        lname: b.lname ?? "",
+        fname: b.fname ?? "",
+        title: b.title ?? "",
+        phone: b.phone ?? "",
+        mobilephone: b.mobilephone ?? "",
+        email: b.email ?? "",
+        fax: b.fax ?? "",
+        organisation: b.organisation ?? 0,
+        department: b.department ?? 0,
+        position: b.position ?? "",
+        clientRef: b.clientRef ?? "",
+        clientStatus: b.clientStatus ?? "",
+        birthday: b.birthday ?? "",
+        marital: b.marital ?? "",
+        facebook: b.facebook ?? "",
+        instagram: b.instagram ?? "",
+        twitter: b.twitter ?? "",
+        linkedin: b.linkedin ?? "",
+      };
+      const data = await biznet.post<BiznetResponse<number>>("/Clients/UpdateCustomer", body);
       res.json({ ok: data.Status, data: data.Argument, message: data.Message });
     } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
   });
@@ -892,7 +938,7 @@ async function startHttp(port: number) {
   app.post("/api/contacts/:id/notes", async (req, res) => {
     try {
       const { note } = req.body as { note: string };
-      const data = await biznet.post<BiznetResponse<unknown>>("/Clients/AddNote", { id: req.params.id, note });
+      const data = await biznet.post<BiznetResponse<unknown>>("/Clients/AddCustomerNote", { id: req.params.id, note });
       res.json({ ok: data.Status, data: data.Argument, message: data.Message });
     } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
   });

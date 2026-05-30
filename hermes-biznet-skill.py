@@ -10,8 +10,7 @@ After installing, Hermes can call:  biznet_crm("list_contacts")
 import requests
 
 BASE_URL = "https://kazrex-mcp-production.up.railway.app"
-API_KEY  = "REPLACE_WITH_MCP_API_KEY"   # stored in Hermes memory
-
+API_KEY  = ec8804b1a5b6b150f5c13fca6bd1b099a6c58e243c6d6101e8ddbf81578ac2ec
 HEADERS = {
     "Authorization": f"Bearer {API_KEY}",
     "Content-Type": "application/json",
@@ -26,9 +25,10 @@ def biznet_crm(action: str, **kwargs):
       list_contacts                         — list all contacts
       get_contact          id               — full details for one contact
       search_by_phone      phone            — find contacts by phone (partial)
-      create_contact       type, lname, [fname, email, phone, mobile,
-                           address, city, country, postCode, reference,
-                           status, user, notes]
+      create_contact       type, lname, [fname, title, phone, mobilephone,
+                           email, fax, organisation, department, position,
+                           clientRef, clientStatus, birthday, marital,
+                           facebook, instagram, twitter, linkedin]
       update_contact       id, type, lname, [...same optional fields]
       add_note             id, note         — add text note to contact
       list_contact_types                    — valid 'type' values for contacts
@@ -100,39 +100,49 @@ def biznet_crm(action: str, **kwargs):
 
     elif action == "create_contact":
         body = {
-            "type":      kwargs["type"],
-            "lname":     kwargs["lname"],
-            "fname":     kwargs.get("fname", ""),
-            "email":     kwargs.get("email", ""),
-            "phone":     kwargs.get("phone", ""),
-            "mobile":    kwargs.get("mobile", ""),
-            "address":   kwargs.get("address", ""),
-            "city":      kwargs.get("city", ""),
-            "country":   kwargs.get("country", ""),
-            "postCode":  kwargs.get("postCode", ""),
-            "reference": kwargs.get("reference", ""),
-            "status":    kwargs.get("status", ""),
-            "user":      kwargs.get("user", ""),
-            "notes":     kwargs.get("notes", ""),
+            "type":         kwargs["type"],
+            "lname":        kwargs["lname"],
+            "fname":        kwargs.get("fname", ""),
+            "title":        kwargs.get("title", ""),
+            "phone":        kwargs.get("phone", ""),
+            "mobilephone":  kwargs.get("mobilephone", ""),
+            "email":        kwargs.get("email", ""),
+            "fax":          kwargs.get("fax", ""),
+            "organisation": kwargs.get("organisation", 0),
+            "department":   kwargs.get("department", 0),
+            "position":     kwargs.get("position", ""),
+            "clientRef":    kwargs.get("clientRef", ""),
+            "clientStatus": kwargs.get("clientStatus", ""),
+            "birthday":     kwargs.get("birthday", ""),
+            "marital":      kwargs.get("marital", ""),
+            "facebook":     kwargs.get("facebook", ""),
+            "instagram":    kwargs.get("instagram", ""),
+            "twitter":      kwargs.get("twitter", ""),
+            "linkedin":     kwargs.get("linkedin", ""),
         }
         return post("/api/contacts", body)
 
     elif action == "update_contact":
         body = {
-            "type":      kwargs["type"],
-            "lname":     kwargs["lname"],
-            "fname":     kwargs.get("fname", ""),
-            "email":     kwargs.get("email", ""),
-            "phone":     kwargs.get("phone", ""),
-            "mobile":    kwargs.get("mobile", ""),
-            "address":   kwargs.get("address", ""),
-            "city":      kwargs.get("city", ""),
-            "country":   kwargs.get("country", ""),
-            "postCode":  kwargs.get("postCode", ""),
-            "reference": kwargs.get("reference", ""),
-            "status":    kwargs.get("status", ""),
-            "user":      kwargs.get("user", ""),
-            "notes":     kwargs.get("notes", ""),
+            "type":         kwargs["type"],
+            "lname":        kwargs["lname"],
+            "fname":        kwargs.get("fname", ""),
+            "title":        kwargs.get("title", ""),
+            "phone":        kwargs.get("phone", ""),
+            "mobilephone":  kwargs.get("mobilephone", ""),
+            "email":        kwargs.get("email", ""),
+            "fax":          kwargs.get("fax", ""),
+            "organisation": kwargs.get("organisation", 0),
+            "department":   kwargs.get("department", 0),
+            "position":     kwargs.get("position", ""),
+            "clientRef":    kwargs.get("clientRef", ""),
+            "clientStatus": kwargs.get("clientStatus", ""),
+            "birthday":     kwargs.get("birthday", ""),
+            "marital":      kwargs.get("marital", ""),
+            "facebook":     kwargs.get("facebook", ""),
+            "instagram":    kwargs.get("instagram", ""),
+            "twitter":      kwargs.get("twitter", ""),
+            "linkedin":     kwargs.get("linkedin", ""),
         }
         return patch(f"/api/contacts/{kwargs['id']}", body)
 

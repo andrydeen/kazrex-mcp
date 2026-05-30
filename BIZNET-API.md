@@ -62,21 +62,28 @@ Create a new person contact.
   "type": "NewPrimary",
   "lname": "Smith",
   "fname": "John",
-  "email": "john@example.com",
+  "title": "Mr",
   "phone": "01234567890",
-  "mobile": "",
-  "address": "123 Main St",
-  "city": "London",
-  "country": "UK",
-  "postCode": "SW1A 1AA",
-  "reference": "",
-  "status": "",
-  "user": "",
-  "notes": ""
+  "mobilephone": "07700900000",
+  "email": "john@example.com",
+  "fax": "",
+  "organisation": 0,
+  "department": 0,
+  "position": "Director",
+  "clientRef": "",
+  "clientStatus": "",
+  "birthday": "01/01/1980",
+  "marital": "",
+  "facebook": "",
+  "instagram": "",
+  "twitter": "",
+  "linkedin": ""
 }
 ```
 `type` must be a value from `GET /api/contact-types`.  
-`lname` (last name) is required. All other fields are optional.
+`lname` (last name) is required. All other fields are optional.  
+`marital` accepts: `Single`, `Married`, `Divorced`, `Widowed`, or `""`.  
+`birthday` format: `DD/MM/YYYY`.
 
 **Response:**
 ```json
