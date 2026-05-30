@@ -860,7 +860,7 @@ async function startHttp(port: number) {
 
   app.get("/api/contacts/:id", async (req, res) => {
     try {
-      const data = await biznet.get<ContactDetail>("/Clients/GetClientInfo", { id: req.params.id });
+      const data = await biznet.get<ContactDetail>("/Clients/GetCustomerDetails", { id: req.params.id });
       res.json({ ok: true, data });
     } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
   });
