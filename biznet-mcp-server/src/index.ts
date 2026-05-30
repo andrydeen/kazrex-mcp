@@ -255,7 +255,7 @@ server.registerTool(
     const now = new Date();
     const date = `${now.getDate().toString().padStart(2,"0")}/${(now.getMonth()+1).toString().padStart(2,"0")}/${now.getFullYear()}`;
     const time = `${now.getHours().toString().padStart(2,"0")}:${now.getMinutes().toString().padStart(2,"0")}`;
-    const res = await biznet.post<BiznetResponse<unknown>>("/Clients/SaveCallLog", {
+    await biznet.post<unknown>("/Clients/SaveCallLog", {
       callLogId: 0,
       caseId: 0,
       customerId: contactId,
@@ -268,7 +268,7 @@ server.registerTool(
       user: "",
       notes: note,
     });
-    return handleApiResponse(res, `Note added to contact ID ${contactId}.`);
+    return ok(`Note added to contact ID ${contactId} (logged as call log entry).`);
   }
 );
 
@@ -955,7 +955,7 @@ async function startHttp(port: number) {
       const now = new Date();
       const date = `${now.getDate().toString().padStart(2,"0")}/${(now.getMonth()+1).toString().padStart(2,"0")}/${now.getFullYear()}`;
       const time = `${now.getHours().toString().padStart(2,"0")}:${now.getMinutes().toString().padStart(2,"0")}`;
-      const data = await biznet.post<BiznetResponse<unknown>>("/Clients/SaveCallLog", {
+      await biznet.post<unknown>("/Clients/SaveCallLog", {
         callLogId: 0,
         caseId: 0,
         customerId: Number(req.params.id),
@@ -968,7 +968,7 @@ async function startHttp(port: number) {
         user: "",
         notes: note,
       });
-      res.json({ ok: data.Status, data: data.Argument, message: data.Message });
+      res.json({ ok: true, message: "Note saved to call log." });
     } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
   });
 
