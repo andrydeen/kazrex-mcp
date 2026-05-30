@@ -253,8 +253,9 @@ server.registerTool(
   },
   async ({ contactId, note }) => {
     const res = await biznet.post<BiznetResponse<unknown>>("/Clients/AddCustomerNote", {
-      id: contactId,
-      note,
+      customer: contactId,
+      value: note,
+      param: "Notes",
     });
     return handleApiResponse(res, `Note added to contact ID ${contactId}.`);
   }
