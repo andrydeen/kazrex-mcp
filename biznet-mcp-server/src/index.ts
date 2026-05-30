@@ -937,8 +937,12 @@ async function startHttp(port: number) {
 
   app.post("/api/contacts/:id/notes", async (req, res) => {
     try {
-      const { note } = req.body as { note: string };
-      const data = await biznet.post<BiznetResponse<unknown>>("/Clients/AddCustomerNote", { id: req.params.id, note });
+      const { note, param } = req.body as { note: string; param?: string };
+      const data = await biznet.post<BiznetResponse<unknown>>("/Clients/AddCustomerNote", {
+        customer: Number(req.params.id),
+        value: note,
+        param: param ?? "Notes",
+      });
       res.json({ ok: data.Status, data: data.Argument, message: data.Message });
     } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
   });
