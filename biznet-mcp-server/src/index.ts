@@ -940,6 +940,148 @@ async function startHttp(port: number) {
     } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
   });
 
+  app.get("/api/contact-types", async (_req, res) => {
+    try {
+      const data = await biznet.get<string[]>("/Clients/GetPrimaryObjectTypes");
+      res.json({ ok: true, data: Array.isArray(data) ? data : [] });
+    } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
+  });
+
+  app.get("/api/organization-types", async (_req, res) => {
+    try {
+      const data = await biznet.get<string[]>("/Clients/GetOrganisationObjectTypes");
+      res.json({ ok: true, data: Array.isArray(data) ? data : [] });
+    } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
+  });
+
+  app.patch("/api/organizations/:id", async (req, res) => {
+    try {
+      const body = req.body as Record<string, unknown>;
+      const data = await biznet.post<BiznetResponse<number>>("/Clients/SaveCompany", { id: Number(req.params.id), ...body });
+      res.json({ ok: data.Status, data: data.Argument, message: data.Message });
+    } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
+  });
+
+  app.post("/api/link-objects", async (req, res) => {
+    try {
+      const { fromId, toId, relation } = req.body as { fromId: number; toId: number; relation?: string };
+      const data = await biznet.post<BiznetResponse<unknown>>("/Clients/LinkObject", { id: fromId, linkedId: toId, relation: relation ?? "" });
+      res.json({ ok: data.Status, data: data.Argument, message: data.Message });
+    } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
+  });
+
+  app.get("/api/workflows", async (req, res) => {
+    try {
+      const { matter } = req.query as { matter?: string };
+      if (!matter) { res.status(400).json({ ok: false, error: "matter query param required" }); return; }
+      const data = await biznet.get<string[]>("/Workflow/GetMasterWorkflowList", { matter });
+      res.json({ ok: true, data: Array.isArray(data) ? data : [] });
+    } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
+  });
+
+  app.post("/api/cases", async (req, res) => {
+    try {
+      const params = req.body as {
+        matterName: string; rootId: number; workflow: string; manager: string;
+        user: string; caseName: string; caseRef?: string; caseNotes?: string;
+        due?: string; isPublic?: boolean; extraClient?: number;
+      };
+      const assignRes = await biznet.post<BiznetResponse<unknown>>(
+        `/Worktypes/AssignMatterType/?matterName=${encodeURIComponent(params.matterName)}&rootId=${params.rootId}`, {}
+      );
+      if (!assignRes.Status) { res.status(400).json({ ok: false, message: assignRes.Message }); return; }
+      const createRes = await biznet.post<BiznetResponse<number>>("/Case/CreateCase", {
+        matterName: params.matterName, workflow: params.workflow, manager: params.manager,
+        user: params.user, caseRef: params.caseRef ?? "", caseNotes: params.caseNotes ?? "",
+        due: params.due ?? "", rootId: params.rootId, isPublic: params.isPublic ?? true,
+        extraClient: params.extraClient ?? 0, extraName: "Partner", caseName: params.caseName,
+      });
+      if (!createRes.Status) { res.status(400).json({ ok: false, message: createRes.Message }); return; }
+      await biznet.post<BiznetResponse<unknown>>(`/Case/SetCaseDefaultPermissions?caseId=${createRes.Argument}`, {}).catch(() => null);
+      res.json({ ok: true, data: createRes.Argument, message: `Case created. ID: ${createRes.Argument}` });
+    } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
+  });
+
+  app.get("/api/cases/:id/events", async (req, res) => {
+    try {
+      const data = await biznet.get<unknown[]>("/Events/GetEventsList", { caseId: req.params.id });
+      res.json({ ok: true, data: Array.isArray(data) ? data : [] });
+    } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
+  });
+
+  app.get("/api/object-types", async (_req, res) => {
+    try {
+      const data = await biznet.get<Array<{ Name: string; Type: string }>>("/Painter/GetRegularCustomTypes");
+      res.json({ ok: true, data: Array.isArray(data) ? data : [] });
+    } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
+  });
+
+  app.get("/api/object-types/:name/fields", async (req, res) => {
+    try {
+      const data = await biznet.get<unknown>("/Painter/LoadTypeData", { objectType: req.params.name });
+      res.json({ ok: true, data });
+    } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
+  });
+
+  app.post("/api/object-types", async (req, res) => {
+    try {
+      const { name, regular, baseType } = req.body as { name: string; regular?: boolean; baseType?: string };
+      const data = await biznet.post<BiznetResponse<unknown>>("/Painter/CreateType/", { name, regular: regular ?? true, baseType: baseType ?? "" });
+      res.json({ ok: data.Status, data: data.Argument, message: data.Message });
+    } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
+  });
+
+  app.get("/api/base-types", async (_req, res) => {
+    try {
+      const data = await biznet.get<string[]>("/Painter/GetBaseTypes");
+      res.json({ ok: true, data: Array.isArray(data) ? data : [] });
+    } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
+  });
+
+  app.get("/api/input-forms", async (req, res) => {
+    try {
+      const params: Record<string, string> = {};
+      if (req.query.type) params.type = String(req.query.type);
+      const data = await biznet.get<unknown[]>("/InputForm/GetTypedInputFormList", params);
+      res.json({ ok: true, data: Array.isArray(data) ? data : [] });
+    } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
+  });
+
+  app.get("/api/input-forms/:id", async (req, res) => {
+    try {
+      const data = await biznet.get<unknown>("/InputForm/GetFormDetails", { id: req.params.id });
+      res.json({ ok: true, data });
+    } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
+  });
+
+  app.post("/api/input-forms", async (req, res) => {
+    try {
+      const { title, objectType, group } = req.body as { title: string; objectType?: string; group?: string };
+      const data = await biznet.post<BiznetResponse<number>>("/InputForm/CreateNewForm", { title, type: objectType ?? "", group: group ?? "" });
+      res.json({ ok: data.Status, data: data.Argument, message: data.Message });
+    } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
+  });
+
+  app.post("/api/input-forms/:id/fields", async (req, res) => {
+    try {
+      const { fieldName, fieldType, required, defaultValue, options } = req.body as {
+        fieldName: string; fieldType: string; required?: boolean; defaultValue?: string; options?: string;
+      };
+      const data = await biznet.post<BiznetResponse<unknown>>("/InputForm/SaveFormField", {
+        formId: Number(req.params.id), name: fieldName, type: fieldType,
+        required: required ?? false, defaultValue: defaultValue ?? "", options: options ?? "",
+      });
+      res.json({ ok: data.Status, data: data.Argument, message: data.Message });
+    } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
+  });
+
+  app.get("/api/departments/:orgId", async (req, res) => {
+    try {
+      const data = await biznet.get<unknown[]>("/Clients/GetDepartmentList", { orgId: req.params.orgId });
+      res.json({ ok: true, data: Array.isArray(data) ? data : [] });
+    } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
+  });
+
   // ─── SSE transport — one session per connection
   const transports = new Map<string, SSEServerTransport>();
 
