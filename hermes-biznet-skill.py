@@ -62,6 +62,12 @@ def biznet_crm(action: str, **kwargs):
       create_object_type   name, [regular, baseType]
       list_base_types                       — base types available to extend
 
+    FIELD UPDATE (Painter custom fields — address, custom data, etc.)
+      update_field         objectId, fieldName, value
+                           Use for: Address, City, PostCode, Country, and
+                           any custom Painter fields on contacts/orgs/cases.
+                           Field names are case-sensitive (see get_type_fields).
+
     INPUT FORMS
       list_input_forms     [type]           — all forms, optional filter by type
       get_input_form       formId           — full form definition with fields
@@ -263,6 +269,12 @@ def biznet_crm(action: str, **kwargs):
         return get("/api/base-types")
 
     # ── Input Forms ───────────────────────────────────────────────────────────
+
+    elif action == "update_field":
+        return post(f"/api/objects/{kwargs['objectId']}/field", {
+            "fieldName": kwargs["fieldName"],
+            "value":     str(kwargs["value"]),
+        })
 
     elif action == "list_input_forms":
         params = {}

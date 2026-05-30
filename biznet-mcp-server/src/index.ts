@@ -1015,6 +1015,14 @@ async function startHttp(port: number) {
     } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
   });
 
+  app.post("/api/objects/:id/field", async (req, res) => {
+    try {
+      const { fieldName, value } = req.body as { fieldName: string; value: string };
+      await biznet.post<unknown>("/Painter/UpdateFieldValue/", { objectId: Number(req.params.id), fieldName, value });
+      res.json({ ok: true, message: `Field '${fieldName}' updated.` });
+    } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
+  });
+
   app.get("/api/contact-types", async (_req, res) => {
     try {
       const data = await biznet.get<string[]>("/Clients/GetPrimaryObjectTypes");
