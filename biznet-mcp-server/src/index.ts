@@ -252,10 +252,21 @@ server.registerTool(
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   },
   async ({ contactId, note }) => {
-    const res = await biznet.post<BiznetResponse<unknown>>("/Clients/AddCustomerNote", {
-      customer: contactId,
-      value: note,
-      param: "Notes",
+    const now = new Date();
+    const date = `${now.getDate().toString().padStart(2,"0")}/${(now.getMonth()+1).toString().padStart(2,"0")}/${now.getFullYear()}`;
+    const time = `${now.getHours().toString().padStart(2,"0")}:${now.getMinutes().toString().padStart(2,"0")}`;
+    const res = await biznet.post<BiznetResponse<unknown>>("/Clients/SaveCallLog", {
+      callLogId: 0,
+      caseId: 0,
+      customerId: contactId,
+      customerName: "",
+      date,
+      time,
+      duration: "00:00",
+      phone: "",
+      type: "External Call",
+      user: "",
+      notes: note,
     });
     return handleApiResponse(res, `Note added to contact ID ${contactId}.`);
   }
@@ -938,11 +949,24 @@ async function startHttp(port: number) {
 
   app.post("/api/contacts/:id/notes", async (req, res) => {
     try {
-      const { note, param } = req.body as { note: string; param?: string };
-      const data = await biznet.post<BiznetResponse<unknown>>("/Clients/AddCustomerNote", {
-        customer: Number(req.params.id),
-        value: note,
-        param: param ?? "Notes",
+      const { note, type, customerName, phone } = req.body as {
+        note: string; type?: string; customerName?: string; phone?: string;
+      };
+      const now = new Date();
+      const date = `${now.getDate().toString().padStart(2,"0")}/${(now.getMonth()+1).toString().padStart(2,"0")}/${now.getFullYear()}`;
+      const time = `${now.getHours().toString().padStart(2,"0")}:${now.getMinutes().toString().padStart(2,"0")}`;
+      const data = await biznet.post<BiznetResponse<unknown>>("/Clients/SaveCallLog", {
+        callLogId: 0,
+        caseId: 0,
+        customerId: Number(req.params.id),
+        customerName: customerName ?? "",
+        date,
+        time,
+        duration: "00:00",
+        phone: phone ?? "",
+        type: type ?? "External Call",
+        user: "",
+        notes: note,
       });
       res.json({ ok: data.Status, data: data.Argument, message: data.Message });
     } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
