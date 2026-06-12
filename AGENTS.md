@@ -123,3 +123,18 @@ Use `biznet_list_contact_types` first to confirm the type exists, then `biznet_l
 cd biznet-mcp-server && npm run build
 ```
 Then restart Codex session.
+
+## Portfolio Kanban
+
+Use the central portfolio task ledger for concrete tasks across projects.
+
+When a new concrete task starts, record it:
+`node /Users/andrydeen/Projects/BookingSystem/scripts/portfolio-task.js start "<task title>"`
+
+When the task is complete and verified, mark it done:
+`node /Users/andrydeen/Projects/BookingSystem/scripts/portfolio-task.js done "<task title>"`
+
+Use `--project <ProjectName>` if the current working directory is not inside the target project.
+The dashboard is at:
+`/Users/andrydeen/Projects/BookingSystem/reports/portfolio-task-kanban.html`
+

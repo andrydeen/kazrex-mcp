@@ -3,16 +3,8 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import express from "express";
 import { z } from "zod";
-import {
-  biznet,
-  BiznetResponse,
-  IdNameItem,
-  NameValueItem,
-  ContactDetail,
-  CaseItem,
-  MatterItem,
-  ObjectTypeInfo,
-} from "./biznet-client.js";
+import * as svc from "./biznet-service.js";
+import { BiznetApiError } from "./biznet-service.js";
 
 const server = new McpServer({
   name: "biznet-mcp-server",
@@ -25,12 +17,16 @@ function ok(text: string) {
   return { content: [{ type: "text" as const, text }] };
 }
 
-function handleApiResponse(res: BiznetResponse<unknown>, successMsg?: string): ReturnType<typeof ok> {
-  if (!res.Status) {
-    return ok(`Error: ${res.Message || "Unknown error from CRM"}`);
-  }
-  const msg = successMsg ?? `Success. Result: ${JSON.stringify(res.Argument)}`;
-  return ok(msg);
+// CRM-level failures (Status:false) come back as readable text, not tool errors
+function tool<A>(fn: (args: A) => Promise<string>) {
+  return async (args: A) => {
+    try {
+      return ok(await fn(args));
+    } catch (e) {
+      if (e instanceof BiznetApiError) return ok(`Error: ${e.message}`);
+      throw e;
+    }
+  };
 }
 
 // ─── CONTACTS ────────────────────────────────────────────────────────────────
@@ -45,12 +41,12 @@ Use biznet_get_contact to fetch full details for a specific contact.`,
     inputSchema: z.object({}),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
-  async () => {
-    const data = await biznet.get<IdNameItem[]>("/Clients/GetPrimaryList");
-    if (!Array.isArray(data) || data.length === 0) return ok("No contacts found.");
+  tool(async () => {
+    const data = await svc.listContacts();
+    if (!Array.isArray(data) || data.length === 0) return "No contacts found.";
     const lines = data.map((c) => `ID: ${c.Id} | Name: ${c.Name}`).join("\n");
-    return ok(`Found ${data.length} contacts:\n\n${lines}`);
-  }
+    return `Found ${data.length} contacts:\n\n${lines}`;
+  })
 );
 
 server.registerTool(
@@ -64,10 +60,10 @@ Returns all fields: name, phone, email, address, organisation, type, status, soc
     }),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
-  async ({ id }) => {
-    const data = await biznet.get<ContactDetail>("/Clients/GetCustomerDetails", { id });
-    return ok(JSON.stringify(data, null, 2));
-  }
+  tool(async ({ id }) => {
+    const data = await svc.getContact(id);
+    return JSON.stringify(data, null, 2);
+  })
 );
 
 server.registerTool(
@@ -81,13 +77,33 @@ Returns list of matching contacts with ID and Name.`,
     }),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
-  async ({ phone }) => {
-    const data = await biznet.get<IdNameItem[]>("/Clients/GetCustomerLookupByPhone", { phone });
-    if (!Array.isArray(data) || data.length === 0) return ok(`No contacts found for phone: ${phone}`);
+  tool(async ({ phone }) => {
+    const data = await svc.searchContactsByPhone(phone);
+    if (!Array.isArray(data) || data.length === 0) return `No contacts found for phone: ${phone}`;
     const lines = data.map((c) => `ID: ${c.Id} | Name: ${c.Name}`).join("\n");
-    return ok(`Found ${data.length} match(es):\n\n${lines}`);
-  }
+    return `Found ${data.length} match(es):\n\n${lines}`;
+  })
 );
+
+const contactFieldsSchema = {
+  fname: z.string().optional().describe("First name"),
+  title: z.string().optional().describe("Title/salutation (Mr, Mrs, Miss, Dr, etc.)"),
+  phone: z.string().optional().describe("Phone number"),
+  mobilephone: z.string().optional().describe("Mobile phone number"),
+  email: z.string().optional().describe("Email address"),
+  fax: z.string().optional().describe("Fax number"),
+  organisation: z.number().int().optional().default(0).describe("Organisation ID (0 = none)"),
+  department: z.number().int().optional().default(0).describe("Department ID (0 = none)"),
+  position: z.string().optional().describe("Job position/title"),
+  clientRef: z.string().optional().describe("Client reference code"),
+  clientStatus: z.string().optional().describe("Status value from lookup list"),
+  birthday: z.string().optional().describe("Birth date in DD/MM/YYYY format"),
+  marital: z.enum(["", "Single", "Married", "Divorced", "Widowed"]).optional().describe("Marital status"),
+  facebook: z.string().optional(),
+  instagram: z.string().optional(),
+  twitter: z.string().optional(),
+  linkedin: z.string().optional(),
+};
 
 server.registerTool(
   "biznet_create_contact",
@@ -100,7 +116,6 @@ Returns the new contact's ID on success.
 Args:
   - type (required): Contact type name (e.g. "Primary")
   - lname (required): Last name
-  - fname: First name
   - title: Salutation (Mr, Mrs, Miss, Dr, etc.)
   - phone: Phone number
   - mobilephone: Mobile/cell number
@@ -117,54 +132,14 @@ Args:
     inputSchema: z.object({
       type: z.string().min(1).describe("Contact type name — required. Use biznet_list_contact_types to get valid values."),
       lname: z.string().min(1).describe("Last name — required"),
-      fname: z.string().optional().describe("First name"),
-      title: z.string().optional().describe("Title/salutation (Mr, Mrs, Miss, Dr, etc.)"),
-      phone: z.string().optional().describe("Phone number"),
-      mobilephone: z.string().optional().describe("Mobile phone number"),
-      email: z.string().optional().describe("Email address"),
-      fax: z.string().optional().describe("Fax number"),
-      organisation: z.number().int().optional().default(0).describe("Organisation ID (0 = none)"),
-      department: z.number().int().optional().default(0).describe("Department ID (0 = none)"),
-      position: z.string().optional().describe("Job position/title"),
-      clientRef: z.string().optional().describe("Client reference code"),
-      clientStatus: z.string().optional().describe("Status value from lookup list"),
-      birthday: z.string().optional().describe("Birth date in DD/MM/YYYY format"),
-      marital: z.enum(["", "Single", "Married", "Divorced", "Widowed"]).optional().describe("Marital status"),
-      facebook: z.string().optional(),
-      instagram: z.string().optional(),
-      twitter: z.string().optional(),
-      linkedin: z.string().optional(),
+      ...contactFieldsSchema,
     }),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   },
-  async (params) => {
-    const body: Record<string, unknown> = {
-      id: 0,
-      type: params.type,
-      lname: params.lname,
-      fname: params.fname ?? "",
-      title: params.title ?? "",
-      phone: params.phone ?? "",
-      mobilephone: params.mobilephone ?? "",
-      email: params.email ?? "",
-      fax: params.fax ?? "",
-      organisation: params.organisation ?? 0,
-      department: params.department ?? 0,
-      position: params.position ?? "",
-      clientRef: params.clientRef ?? "",
-      clientStatus: params.clientStatus ?? "",
-      birthday: params.birthday ?? "",
-      marital: params.marital ?? "",
-      facebook: params.facebook ?? "",
-      instagram: params.instagram ?? "",
-      twitter: params.twitter ?? "",
-      linkedin: params.linkedin ?? "",
-      presetId: 0,
-      fillTabs: false,
-    };
-    const res = await biznet.post<BiznetResponse<number>>("/Clients/AddCustomer", body);
-    return handleApiResponse(res, `Contact created successfully. New contact ID: ${res.Argument}`);
-  }
+  tool(async (params) => {
+    const newId = await svc.createContact(params);
+    return `Contact created successfully. New contact ID: ${newId}`;
+  })
 );
 
 server.registerTool(
@@ -177,52 +152,14 @@ Returns the contact ID on success.`,
       id: z.number().int().positive().describe("Contact ID to update"),
       type: z.string().min(1).describe("Contact type name (cannot be changed after creation, but must still be sent)"),
       lname: z.string().min(1).describe("Last name"),
-      fname: z.string().optional(),
-      title: z.string().optional(),
-      phone: z.string().optional(),
-      mobilephone: z.string().optional(),
-      email: z.string().optional(),
-      fax: z.string().optional(),
-      organisation: z.number().int().optional().default(0),
-      department: z.number().int().optional().default(0),
-      position: z.string().optional(),
-      clientRef: z.string().optional(),
-      clientStatus: z.string().optional(),
-      birthday: z.string().optional(),
-      marital: z.enum(["", "Single", "Married", "Divorced", "Widowed"]).optional(),
-      facebook: z.string().optional(),
-      instagram: z.string().optional(),
-      twitter: z.string().optional(),
-      linkedin: z.string().optional(),
+      ...contactFieldsSchema,
     }),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
-  async (params) => {
-    const body: Record<string, unknown> = {
-      id: params.id,
-      type: params.type,
-      lname: params.lname,
-      fname: params.fname ?? "",
-      title: params.title ?? "",
-      phone: params.phone ?? "",
-      mobilephone: params.mobilephone ?? "",
-      email: params.email ?? "",
-      fax: params.fax ?? "",
-      organisation: params.organisation ?? 0,
-      department: params.department ?? 0,
-      position: params.position ?? "",
-      clientRef: params.clientRef ?? "",
-      clientStatus: params.clientStatus ?? "",
-      birthday: params.birthday ?? "",
-      marital: params.marital ?? "",
-      facebook: params.facebook ?? "",
-      instagram: params.instagram ?? "",
-      twitter: params.twitter ?? "",
-      linkedin: params.linkedin ?? "",
-    };
-    const res = await biznet.post<BiznetResponse<number>>("/Clients/UpdateCustomer", body);
-    return handleApiResponse(res, `Contact ID ${params.id} updated successfully.`);
-  }
+  tool(async ({ id, ...params }) => {
+    await svc.updateContact(id, params);
+    return `Contact ID ${id} updated successfully.`;
+  })
 );
 
 server.registerTool(
@@ -233,11 +170,11 @@ server.registerTool(
     inputSchema: z.object({}),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
-  async () => {
-    const data = await biznet.get<string[]>("/Clients/GetPrimaryObjectTypes");
-    if (!Array.isArray(data) || data.length === 0) return ok("No contact types found.");
-    return ok(`Available contact types:\n${data.map((t) => `- ${t}`).join("\n")}`);
-  }
+  tool(async () => {
+    const data = await svc.listContactTypes();
+    if (!Array.isArray(data) || data.length === 0) return "No contact types found.";
+    return `Available contact types:\n${data.map((t) => `- ${t}`).join("\n")}`;
+  })
 );
 
 server.registerTool(
@@ -251,25 +188,10 @@ server.registerTool(
     }),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   },
-  async ({ contactId, note }) => {
-    const now = new Date();
-    const date = `${now.getDate().toString().padStart(2,"0")}/${(now.getMonth()+1).toString().padStart(2,"0")}/${now.getFullYear()}`;
-    const time = `${now.getHours().toString().padStart(2,"0")}:${now.getMinutes().toString().padStart(2,"0")}`;
-    await biznet.post<unknown>("/Clients/SaveCallLog", {
-      callLogId: 0,
-      caseId: 0,
-      customerId: contactId,
-      customerName: "",
-      date,
-      time,
-      duration: "00:00",
-      phone: "",
-      type: "External Call",
-      user: "",
-      notes: note,
-    });
-    return ok(`Note added to contact ID ${contactId} (logged as call log entry).`);
-  }
+  tool(async ({ contactId, note }) => {
+    await svc.addContactNote(contactId, note);
+    return `Note added to contact ID ${contactId} (logged as call log entry).`;
+  })
 );
 
 // ─── ORGANIZATIONS ────────────────────────────────────────────────────────────
@@ -284,12 +206,12 @@ Use biznet_get_organization_types to get valid type values before creating.`,
     inputSchema: z.object({}),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
-  async () => {
-    const data = await biznet.get<IdNameItem[]>("/Clients/GetOrganisationList");
-    if (!Array.isArray(data) || data.length === 0) return ok("No organizations found.");
+  tool(async () => {
+    const data = await svc.listOrganizations();
+    if (!Array.isArray(data) || data.length === 0) return "No organizations found.";
     const lines = data.map((o) => `ID: ${o.Id} | Name: ${o.Name}`).join("\n");
-    return ok(`Found ${data.length} organizations:\n\n${lines}`);
-  }
+    return `Found ${data.length} organizations:\n\n${lines}`;
+  })
 );
 
 server.registerTool(
@@ -300,12 +222,27 @@ server.registerTool(
     inputSchema: z.object({}),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
-  async () => {
-    const data = await biznet.get<string[]>("/Clients/GetOrganisationObjectTypes");
-    if (!Array.isArray(data) || data.length === 0) return ok("No organization types found.");
-    return ok(`Available organization types:\n${data.map((t) => `- ${t}`).join("\n")}`);
-  }
+  tool(async () => {
+    const data = await svc.listOrganizationTypes();
+    if (!Array.isArray(data) || data.length === 0) return "No organization types found.";
+    return `Available organization types:\n${data.map((t) => `- ${t}`).join("\n")}`;
+  })
 );
+
+const organizationFieldsSchema = {
+  country: z.string().optional(),
+  city: z.string().optional(),
+  address: z.string().optional(),
+  postCode: z.string().optional(),
+  phone: z.string().optional(),
+  email: z.string().optional(),
+  url: z.string().optional(),
+  reference: z.string().optional(),
+  orgType: z.string().optional().describe("Category (e.g. supplier). Use biznet_get_lookup_list category=OrgType"),
+  user: z.string().optional().describe("Assigned user ID or name"),
+  notes: z.string().optional(),
+  action: z.string().optional(),
+};
 
 server.registerTool(
   "biznet_create_organization",
@@ -333,42 +270,14 @@ Args:
     inputSchema: z.object({
       type: z.string().min(1).describe("Organization type name — required. Use biznet_list_organization_types."),
       name: z.string().min(1).describe("Organization name — required"),
-      country: z.string().optional(),
-      city: z.string().optional(),
-      address: z.string().optional(),
-      postCode: z.string().optional(),
-      phone: z.string().optional(),
-      email: z.string().optional(),
-      url: z.string().optional(),
-      reference: z.string().optional(),
-      orgType: z.string().optional().describe("Category (e.g. supplier). Use biznet_get_lookup_list category=OrgType"),
-      user: z.string().optional().describe("Assigned user ID or name"),
-      notes: z.string().optional(),
-      action: z.string().optional(),
+      ...organizationFieldsSchema,
     }),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   },
-  async (params) => {
-    const body: Record<string, unknown> = {
-      id: 0,
-      type: params.type,
-      name: params.name,
-      country: params.country ?? "",
-      city: params.city ?? "",
-      address: params.address ?? "",
-      postCode: params.postCode ?? "",
-      phone: params.phone ?? "",
-      email: params.email ?? "",
-      url: params.url ?? "",
-      reference: params.reference ?? "",
-      orgType: params.orgType ?? "",
-      user: params.user ?? "",
-      notes: params.notes ?? "",
-      action: params.action ?? "",
-    };
-    const res = await biznet.post<BiznetResponse<number>>("/Clients/SaveCompany", body);
-    return handleApiResponse(res, `Organization created successfully. New organization ID: ${res.Argument}`);
-  }
+  tool(async (params) => {
+    const newId = await svc.saveOrganization(0, params);
+    return `Organization created successfully. New organization ID: ${newId}`;
+  })
 );
 
 server.registerTool(
@@ -380,42 +289,14 @@ server.registerTool(
       id: z.number().int().positive().describe("Organization ID to update"),
       type: z.string().min(1).describe("Organization type name (must be provided)"),
       name: z.string().min(1).describe("Organization name"),
-      country: z.string().optional(),
-      city: z.string().optional(),
-      address: z.string().optional(),
-      postCode: z.string().optional(),
-      phone: z.string().optional(),
-      email: z.string().optional(),
-      url: z.string().optional(),
-      reference: z.string().optional(),
-      orgType: z.string().optional(),
-      user: z.string().optional(),
-      notes: z.string().optional(),
-      action: z.string().optional(),
+      ...organizationFieldsSchema,
     }),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
-  async (params) => {
-    const body: Record<string, unknown> = {
-      id: params.id,
-      type: params.type,
-      name: params.name,
-      country: params.country ?? "",
-      city: params.city ?? "",
-      address: params.address ?? "",
-      postCode: params.postCode ?? "",
-      phone: params.phone ?? "",
-      email: params.email ?? "",
-      url: params.url ?? "",
-      reference: params.reference ?? "",
-      orgType: params.orgType ?? "",
-      user: params.user ?? "",
-      notes: params.notes ?? "",
-      action: params.action ?? "",
-    };
-    const res = await biznet.post<BiznetResponse<number>>("/Clients/SaveCompany", body);
-    return handleApiResponse(res, `Organization ID ${params.id} updated successfully.`);
-  }
+  tool(async ({ id, ...params }) => {
+    await svc.saveOrganization(id, params);
+    return `Organization ID ${id} updated successfully.`;
+  })
 );
 
 server.registerTool(
@@ -430,14 +311,10 @@ server.registerTool(
     }),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
-  async ({ fromId, toId, relation }) => {
-    const res = await biznet.post<BiznetResponse<unknown>>("/Clients/LinkObject", {
-      id: fromId,
-      linkedId: toId,
-      relation: relation ?? "",
-    });
-    return handleApiResponse(res, `Objects ${fromId} and ${toId} linked successfully.`);
-  }
+  tool(async ({ fromId, toId, relation }) => {
+    await svc.linkObjects(fromId, toId, relation);
+    return `Objects ${fromId} and ${toId} linked successfully.`;
+  })
 );
 
 // ─── CASES ────────────────────────────────────────────────────────────────────
@@ -453,14 +330,14 @@ Returns cases with their ID, name, workflow, user, manager, and reference.`,
     }),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
-  async ({ contactId }) => {
-    const data = await biznet.get<CaseItem[]>("/Clients/GetCustomerCaseList", { rootId: contactId });
-    if (!Array.isArray(data) || data.length === 0) return ok(`No cases found for contact ID ${contactId}.`);
+  tool(async ({ contactId }) => {
+    const data = await svc.listCasesForContact(contactId);
+    if (!Array.isArray(data) || data.length === 0) return `No cases found for contact ID ${contactId}.`;
     const lines = data
       .map((c) => `ID: ${c.Id} | Name: ${c.Name}${c.Reference ? ` | Ref: ${c.Reference}` : ""}`)
       .join("\n");
-    return ok(`Found ${data.length} cases for contact ${contactId}:\n\n${lines}`);
-  }
+    return `Found ${data.length} cases for contact ${contactId}:\n\n${lines}`;
+  })
 );
 
 server.registerTool(
@@ -472,12 +349,12 @@ Returns {Id, Name} for each type. Use the Id as 'matterName' when creating a cas
     inputSchema: z.object({}),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
-  async () => {
-    const data = await biznet.get<MatterItem[]>("/Worktypes/GetMatterList");
-    if (!Array.isArray(data) || data.length === 0) return ok("No case types defined.");
+  tool(async () => {
+    const data = await svc.listCaseTypes();
+    if (!Array.isArray(data) || data.length === 0) return "No case types defined.";
     const lines = data.map((m) => `ID: ${m.Id} | Name: ${m.Name}`).join("\n");
-    return ok(`Available case types:\n\n${lines}`);
-  }
+    return `Available case types:\n\n${lines}`;
+  })
 );
 
 server.registerTool(
@@ -491,11 +368,11 @@ Returns workflow names. Use one of these as the 'workflow' field when creating a
     }),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
-  async ({ matterName }) => {
-    const data = await biznet.get<string[]>("/Workflow/GetMasterWorkflowList", { matter: matterName });
-    if (!Array.isArray(data) || data.length === 0) return ok(`No workflows found for matter type: ${matterName}`);
-    return ok(`Workflows for '${matterName}':\n${data.map((w) => `- ${w}`).join("\n")}`);
-  }
+  tool(async ({ matterName }) => {
+    const data = await svc.listWorkflows(matterName);
+    if (!Array.isArray(data) || data.length === 0) return `No workflows found for matter type: ${matterName}`;
+    return `Workflows for '${matterName}':\n${data.map((w) => `- ${w}`).join("\n")}`;
+  })
 );
 
 server.registerTool(
@@ -528,46 +405,10 @@ Returns the new case ID on success.`,
     }),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   },
-  async (params) => {
-    // Step 1: Assign matter type to client
-    const assignRes = await biznet.post<BiznetResponse<unknown>>(
-      `/Worktypes/AssignMatterType/?matterName=${encodeURIComponent(params.matterName)}&rootId=${params.rootId}`,
-      {}
-    );
-    if (!assignRes.Status) {
-      return ok(`Error assigning matter type: ${assignRes.Message}`);
-    }
-
-    // Step 2: Create the case
-    const createRes = await biznet.post<BiznetResponse<number>>("/Case/CreateCase", {
-      matterName: params.matterName,
-      workflow: params.workflow,
-      manager: params.manager,
-      user: params.user,
-      caseRef: params.caseRef ?? "",
-      caseNotes: params.caseNotes ?? "",
-      due: params.due ?? "",
-      rootId: params.rootId,
-      isPublic: params.isPublic ?? true,
-      extraClient: params.extraClient ?? 0,
-      extraName: "Partner",
-      caseName: params.caseName,
-    });
-
-    if (!createRes.Status) {
-      return ok(`Error creating case: ${createRes.Message}`);
-    }
-
-    const caseId = createRes.Argument;
-
-    // Step 3: Set default permissions
-    await biznet.post<BiznetResponse<unknown>>(
-      `/Case/SetCaseDefaultPermissions?caseId=${caseId}`,
-      {}
-    ).catch(() => null); // Non-fatal if this fails
-
-    return ok(`Case created successfully.\nCase ID: ${caseId}\nCase Name: ${params.caseName}`);
-  }
+  tool(async (params) => {
+    const caseId = await svc.createCase(params);
+    return `Case created successfully.\nCase ID: ${caseId}\nCase Name: ${params.caseName}`;
+  })
 );
 
 server.registerTool(
@@ -581,11 +422,11 @@ Returns event details including title, status, due date, assigned user, and resu
     }),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
-  async ({ caseId }) => {
-    const data = await biznet.get<unknown[]>("/Events/GetEventsList", { caseId });
-    if (!Array.isArray(data) || data.length === 0) return ok(`No events found for case ID ${caseId}.`);
-    return ok(`Case ${caseId} has ${data.length} event(s):\n\n${JSON.stringify(data, null, 2)}`);
-  }
+  tool(async ({ caseId }) => {
+    const data = await svc.getCaseEvents(caseId);
+    if (!Array.isArray(data) || data.length === 0) return `No events found for case ID ${caseId}.`;
+    return `Case ${caseId} has ${data.length} event(s):\n\n${JSON.stringify(data, null, 2)}`;
+  })
 );
 
 // ─── OBJECT TYPES ─────────────────────────────────────────────────────────────
@@ -599,14 +440,12 @@ Returns type names. Use biznet_get_type_fields to inspect a type's fields.`,
     inputSchema: z.object({}),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
-  async () => {
-    const data = await biznet.get<Array<{ Name: string; Type: string }>>(
-      "/Painter/GetRegularCustomTypes"
-    );
-    if (!Array.isArray(data) || data.length === 0) return ok("No custom object types defined.");
+  tool(async () => {
+    const data = await svc.listObjectTypes();
+    if (!Array.isArray(data) || data.length === 0) return "No custom object types defined.";
     const lines = data.map((t) => `Name: ${t.Name} | Type: ${t.Type}`).join("\n");
-    return ok(`Custom object types:\n\n${lines}`);
-  }
+    return `Custom object types:\n\n${lines}`;
+  })
 );
 
 server.registerTool(
@@ -621,10 +460,10 @@ Use this before creating objects of a custom type to know what fields are availa
     }),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
-  async ({ objectType }) => {
-    const data = await biznet.get<ObjectTypeInfo>("/Painter/LoadTypeData", { objectType });
-    return ok(JSON.stringify(data, null, 2));
-  }
+  tool(async ({ objectType }) => {
+    const data = await svc.getTypeFields(objectType);
+    return JSON.stringify(data, null, 2);
+  })
 );
 
 server.registerTool(
@@ -647,14 +486,10 @@ After creating, use biznet_get_type_fields to inspect the new type's fields. Add
     }),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   },
-  async ({ name, regular, baseType }) => {
-    const res = await biznet.post<BiznetResponse<unknown>>("/Painter/CreateType/", {
-      name,
-      regular: regular ?? true,
-      baseType: baseType ?? "",
-    });
-    return handleApiResponse(res, `Object type '${name}' created successfully.`);
-  }
+  tool(async ({ name, regular, baseType }) => {
+    await svc.createObjectType(name, regular ?? true, baseType ?? "");
+    return `Object type '${name}' created successfully.`;
+  })
 );
 
 server.registerTool(
@@ -666,11 +501,32 @@ These are the parent types a new custom type can extend.`,
     inputSchema: z.object({}),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
-  async () => {
-    const data = await biznet.get<string[]>("/Painter/GetBaseTypes");
-    if (!Array.isArray(data) || data.length === 0) return ok("No base types available.");
-    return ok(`Available base types:\n${data.map((t) => `- ${t}`).join("\n")}`);
-  }
+  tool(async () => {
+    const data = await svc.getBaseTypes();
+    if (!Array.isArray(data) || data.length === 0) return "No base types available.";
+    return `Available base types:\n${data.map((t) => `- ${t}`).join("\n")}`;
+  })
+);
+
+server.registerTool(
+  "biznet_update_field",
+  {
+    title: "Update Single Field on Object",
+    description: `Set a single field value on any CRM object (contact, organization, or custom object).
+This is the only reliable way to save address fields (Address, Address2, City, County, PostCode, Country)
+and also works for Fax, Phone, Email, and custom fields.
+Use biznet_get_type_fields to discover field names for a type.`,
+    inputSchema: z.object({
+      objectId: z.number().int().positive().describe("ID of the contact, organization, or custom object"),
+      fieldName: z.string().min(1).describe("Field name (e.g. Address, City, PostCode, Country, Fax)"),
+      value: z.string().describe("New value for the field"),
+    }),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  tool(async ({ objectId, fieldName, value }) => {
+    await svc.updateFieldValue(objectId, fieldName, value);
+    return `Field '${fieldName}' updated on object ID ${objectId}.`;
+  })
 );
 
 // ─── INPUT FORMS ──────────────────────────────────────────────────────────────
@@ -687,13 +543,11 @@ Returns form details including ID, title, and associated type.`,
     }),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
-  async ({ type }) => {
-    const params: Record<string, string> = {};
-    if (type) params.type = type;
-    const data = await biznet.get<unknown[]>("/InputForm/GetTypedInputFormList", params);
-    if (!Array.isArray(data) || data.length === 0) return ok("No input forms found.");
-    return ok(`Input forms (${data.length}):\n\n${JSON.stringify(data, null, 2)}`);
-  }
+  tool(async ({ type }) => {
+    const data = await svc.listInputForms(type);
+    if (!Array.isArray(data) || data.length === 0) return "No input forms found.";
+    return `Input forms (${data.length}):\n\n${JSON.stringify(data, null, 2)}`;
+  })
 );
 
 server.registerTool(
@@ -706,10 +560,10 @@ server.registerTool(
     }),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
-  async ({ formId }) => {
-    const data = await biznet.get<unknown>("/InputForm/GetFormDetails", { id: formId });
-    return ok(JSON.stringify(data, null, 2));
-  }
+  tool(async ({ formId }) => {
+    const data = await svc.getInputForm(formId);
+    return JSON.stringify(data, null, 2);
+  })
 );
 
 server.registerTool(
@@ -727,14 +581,10 @@ Returns the new form's ID on success.`,
     }),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   },
-  async ({ title, objectType, group }) => {
-    const res = await biznet.post<BiznetResponse<number>>("/InputForm/CreateNewForm", {
-      title,
-      type: objectType ?? "",
-      group: group ?? "",
-    });
-    return handleApiResponse(res, `Input form '${title}' created. Form ID: ${res.Argument}`);
-  }
+  tool(async ({ title, objectType, group }) => {
+    const formId = await svc.createInputForm(title, objectType, group);
+    return `Input form '${title}' created. Form ID: ${formId}`;
+  })
 );
 
 server.registerTool(
@@ -756,17 +606,10 @@ Use biznet_get_input_form to see existing fields before adding.`,
     }),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   },
-  async ({ formId, fieldName, fieldType, required, defaultValue, options }) => {
-    const res = await biznet.post<BiznetResponse<unknown>>("/InputForm/SaveFormField", {
-      formId,
-      name: fieldName,
-      type: fieldType,
-      required: required ?? false,
-      defaultValue: defaultValue ?? "",
-      options: options ?? "",
-    });
-    return handleApiResponse(res, `Field '${fieldName}' added to form ID ${formId}.`);
-  }
+  tool(async (params) => {
+    await svc.addFormField(params);
+    return `Field '${params.fieldName}' added to form ID ${params.formId}.`;
+  })
 );
 
 // ─── USERS & LOOKUPS ──────────────────────────────────────────────────────────
@@ -781,12 +624,12 @@ or for 'user' fields when creating organizations.`,
     inputSchema: z.object({}),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
-  async () => {
-    const data = await biznet.get<NameValueItem[]>("/Config/GetUserListNameValueList");
-    if (!Array.isArray(data) || data.length === 0) return ok("No users found.");
+  tool(async () => {
+    const data = await svc.listUsers();
+    if (!Array.isArray(data) || data.length === 0) return "No users found.";
     const lines = data.map((u) => `Name: ${u.Name} | Value: ${u.Value}`).join("\n");
-    return ok(`Users (${data.length}):\n\n${lines}`);
-  }
+    return `Users (${data.length}):\n\n${lines}`;
+  })
 );
 
 server.registerTool(
@@ -815,12 +658,12 @@ Returns {Name, Value} pairs.`,
     }),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
-  async ({ category, sort }) => {
-    const data = await biznet.get<NameValueItem[]>("/Config/GetLookupList", { category, sort: sort ?? false });
-    if (!Array.isArray(data) || data.length === 0) return ok(`No values found for category: ${category}`);
+  tool(async ({ category, sort }) => {
+    const data = await svc.getLookupList(category, sort ?? false);
+    if (!Array.isArray(data) || data.length === 0) return `No values found for category: ${category}`;
     const lines = data.map((i) => `Name: ${i.Name} | Value: ${i.Value}`).join("\n");
-    return ok(`Lookup values for '${category}' (${data.length}):\n\n${lines}`);
-  }
+    return `Lookup values for '${category}' (${data.length}):\n\n${lines}`;
+  })
 );
 
 server.registerTool(
@@ -834,11 +677,11 @@ Returns {Id, Name, Ref, Phone, Notes} for each department.`,
     }),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
-  async ({ organizationId }) => {
-    const data = await biznet.get<unknown[]>("/Clients/GetDepartmentList", { orgId: organizationId });
-    if (!Array.isArray(data) || data.length === 0) return ok(`No departments found for organization ${organizationId}.`);
-    return ok(`Departments for organization ${organizationId}:\n\n${JSON.stringify(data, null, 2)}`);
-  }
+  tool(async ({ organizationId }) => {
+    const data = await svc.getDepartments(organizationId);
+    if (!Array.isArray(data) || data.length === 0) return `No departments found for organization ${organizationId}.`;
+    return `Departments for organization ${organizationId}:\n\n${JSON.stringify(data, null, 2)}`;
+  })
 );
 
 // ─── SERVER STARTUP ───────────────────────────────────────────────────────────
@@ -871,307 +714,133 @@ async function startHttp(port: number) {
 
   // ─── REST API (for Hermes and other HTTP clients) ─────────────────────────
 
-  app.get("/api/contacts", async (_req, res) => {
-    try {
-      const data = await biznet.get<IdNameItem[]>("/Clients/GetPrimaryList");
-      res.json({ ok: true, data: Array.isArray(data) ? data : [] });
-    } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
-  });
+  type RouteHandler = (req: express.Request) => Promise<{ data?: unknown; message?: string }>;
 
-  app.get("/api/contacts/:id", async (req, res) => {
-    try {
-      const data = await biznet.get<ContactDetail>("/Clients/GetCustomerDetails", { id: req.params.id });
-      res.json({ ok: true, data });
-    } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
-  });
+  // Shared error mapping: CRM Status:false → 400, anything else → 500
+  function route(handler: RouteHandler) {
+    return async (req: express.Request, res: express.Response) => {
+      try {
+        const result = await handler(req);
+        res.json({ ok: true, ...result });
+      } catch (e) {
+        if (e instanceof BiznetApiError) {
+          res.status(400).json({ ok: false, message: e.message });
+        } else {
+          res.status(500).json({ ok: false, error: String(e) });
+        }
+      }
+    };
+  }
 
-  app.post("/api/contacts/search/phone", async (req, res) => {
-    try {
-      const { phone } = req.body as { phone: string };
-      const data = await biznet.get<IdNameItem[]>("/Clients/GetPrimaryList", { phone });
-      res.json({ ok: true, data: Array.isArray(data) ? data : [] });
-    } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
-  });
+  const asList = (data: unknown) => ({ data: Array.isArray(data) ? data : [] });
 
-  app.post("/api/contacts", async (req, res) => {
-    try {
-      const b = req.body as Record<string, unknown>;
-      const body = {
-        id: 0,
-        type: b.type ?? "",
-        lname: b.lname ?? "",
-        fname: b.fname ?? "",
-        title: b.title ?? "",
-        phone: b.phone ?? "",
-        mobilephone: b.mobilephone ?? "",
-        email: b.email ?? "",
-        fax: b.fax ?? "",
-        organisation: b.organisation ?? 0,
-        department: b.department ?? 0,
-        position: b.position ?? "",
-        clientRef: b.clientRef ?? "",
-        clientStatus: b.clientStatus ?? "",
-        birthday: b.birthday ?? "",
-        marital: b.marital ?? "",
-        facebook: b.facebook ?? "",
-        instagram: b.instagram ?? "",
-        twitter: b.twitter ?? "",
-        linkedin: b.linkedin ?? "",
-        presetId: 0,
-        fillTabs: false,
-      };
-      const data = await biznet.post<BiznetResponse<number>>("/Clients/AddCustomer", body);
-      res.json({ ok: data.Status, data: data.Argument, message: data.Message });
-    } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
-  });
+  app.get("/api/contacts", route(async () => asList(await svc.listContacts())));
 
-  app.patch("/api/contacts/:id", async (req, res) => {
-    try {
-      const b = req.body as Record<string, unknown>;
-      const body = {
-        id: Number(req.params.id),
-        type: b.type ?? "",
-        lname: b.lname ?? "",
-        fname: b.fname ?? "",
-        title: b.title ?? "",
-        phone: b.phone ?? "",
-        mobilephone: b.mobilephone ?? "",
-        email: b.email ?? "",
-        fax: b.fax ?? "",
-        organisation: b.organisation ?? 0,
-        department: b.department ?? 0,
-        position: b.position ?? "",
-        clientRef: b.clientRef ?? "",
-        clientStatus: b.clientStatus ?? "",
-        birthday: b.birthday ?? "",
-        marital: b.marital ?? "",
-        facebook: b.facebook ?? "",
-        instagram: b.instagram ?? "",
-        twitter: b.twitter ?? "",
-        linkedin: b.linkedin ?? "",
-      };
-      const data = await biznet.post<BiznetResponse<number>>("/Clients/UpdateCustomer", body);
-      res.json({ ok: data.Status, data: data.Argument, message: data.Message });
-    } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
-  });
+  app.get("/api/contacts/:id", route(async (req) => ({ data: await svc.getContact(req.params.id) })));
 
-  app.post("/api/contacts/:id/notes", async (req, res) => {
-    try {
-      const { note, type, customerName, phone } = req.body as {
-        note: string; type?: string; customerName?: string; phone?: string;
-      };
-      const now = new Date();
-      const date = `${now.getDate().toString().padStart(2,"0")}/${(now.getMonth()+1).toString().padStart(2,"0")}/${now.getFullYear()}`;
-      const time = `${now.getHours().toString().padStart(2,"0")}:${now.getMinutes().toString().padStart(2,"0")}`;
-      await biznet.post<unknown>("/Clients/SaveCallLog", {
-        callLogId: 0,
-        caseId: 0,
-        customerId: Number(req.params.id),
-        customerName: customerName ?? "",
-        date,
-        time,
-        duration: "00:00",
-        phone: phone ?? "",
-        type: type ?? "External Call",
-        user: "",
-        notes: note,
-      });
-      res.json({ ok: true, message: "Note saved to call log." });
-    } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
-  });
+  app.post("/api/contacts/search/phone", route(async (req) => {
+    const { phone } = req.body as { phone: string };
+    return asList(await svc.searchContactsByPhone(phone));
+  }));
 
-  app.get("/api/organizations", async (_req, res) => {
-    try {
-      const data = await biznet.get<IdNameItem[]>("/Clients/GetOrganisationList");
-      res.json({ ok: true, data: Array.isArray(data) ? data : [] });
-    } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
-  });
+  app.post("/api/contacts", route(async (req) => ({
+    data: await svc.createContact(req.body as svc.ContactParams),
+  })));
 
-  app.post("/api/organizations", async (req, res) => {
-    try {
-      const body = req.body as Record<string, unknown>;
-      const data = await biznet.post<BiznetResponse<unknown>>("/Clients/CreateOrganisation", body);
-      res.json({ ok: data.Status, data: data.Argument, message: data.Message });
-    } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
-  });
+  app.patch("/api/contacts/:id", route(async (req) => ({
+    data: await svc.updateContact(Number(req.params.id), req.body as svc.ContactParams),
+  })));
 
-  app.get("/api/contacts/:id/cases", async (req, res) => {
-    try {
-      const data = await biznet.get<CaseItem[]>("/Cases/GetCaseList", { clientId: req.params.id });
-      res.json({ ok: true, data: Array.isArray(data) ? data : [] });
-    } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
-  });
+  app.post("/api/contacts/:id/notes", route(async (req) => {
+    const { note, type, customerName, phone } = req.body as {
+      note: string; type?: string; customerName?: string; phone?: string;
+    };
+    await svc.addContactNote(Number(req.params.id), note, { type, customerName, phone });
+    return { message: "Note saved to call log." };
+  }));
 
-  app.get("/api/case-types", async (_req, res) => {
-    try {
-      const data = await biznet.get<MatterItem[]>("/Cases/GetMatterList");
-      res.json({ ok: true, data: Array.isArray(data) ? data : [] });
-    } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
-  });
+  app.get("/api/organizations", route(async () => asList(await svc.listOrganizations())));
 
-  app.get("/api/users", async (_req, res) => {
-    try {
-      const data = await biznet.get<NameValueItem[]>("/Admin/GetUserList");
-      res.json({ ok: true, data: Array.isArray(data) ? data : [] });
-    } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
-  });
+  app.post("/api/organizations", route(async (req) => ({
+    data: await svc.saveOrganization(0, req.body as svc.OrganizationParams),
+  })));
 
-  app.get("/api/lookup/:category", async (req, res) => {
-    try {
-      const data = await biznet.get<NameValueItem[]>("/Config/GetLookupList", { category: req.params.category });
-      res.json({ ok: true, data: Array.isArray(data) ? data : [] });
-    } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
-  });
+  app.patch("/api/organizations/:id", route(async (req) => ({
+    data: await svc.saveOrganization(Number(req.params.id), req.body as svc.OrganizationParams),
+  })));
 
-  app.post("/api/objects/:id/field", async (req, res) => {
-    try {
-      const { fieldName, value } = req.body as { fieldName: string; value: string };
-      await biznet.post<unknown>("/Painter/UpdateFieldValue/", { objectId: Number(req.params.id), fieldName, value });
-      res.json({ ok: true, message: `Field '${fieldName}' updated.` });
-    } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
-  });
+  app.get("/api/contacts/:id/cases", route(async (req) => asList(await svc.listCasesForContact(req.params.id))));
 
-  app.get("/api/contact-types", async (_req, res) => {
-    try {
-      const data = await biznet.get<string[]>("/Clients/GetPrimaryObjectTypes");
-      res.json({ ok: true, data: Array.isArray(data) ? data : [] });
-    } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
-  });
+  app.get("/api/case-types", route(async () => asList(await svc.listCaseTypes())));
 
-  app.get("/api/organization-types", async (_req, res) => {
-    try {
-      const data = await biznet.get<string[]>("/Clients/GetOrganisationObjectTypes");
-      res.json({ ok: true, data: Array.isArray(data) ? data : [] });
-    } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
-  });
+  app.get("/api/users", route(async () => asList(await svc.listUsers())));
 
-  app.patch("/api/organizations/:id", async (req, res) => {
-    try {
-      const body = req.body as Record<string, unknown>;
-      const data = await biznet.post<BiznetResponse<number>>("/Clients/SaveCompany", { id: Number(req.params.id), ...body });
-      res.json({ ok: data.Status, data: data.Argument, message: data.Message });
-    } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
-  });
+  app.get("/api/lookup/:category", route(async (req) => asList(await svc.getLookupList(req.params.category))));
 
-  app.post("/api/link-objects", async (req, res) => {
-    try {
-      const { fromId, toId, relation } = req.body as { fromId: number; toId: number; relation?: string };
-      const data = await biznet.post<BiznetResponse<unknown>>("/Clients/LinkObject", { id: fromId, linkedId: toId, relation: relation ?? "" });
-      res.json({ ok: data.Status, data: data.Argument, message: data.Message });
-    } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
-  });
+  app.post("/api/objects/:id/field", route(async (req) => {
+    const { fieldName, value } = req.body as { fieldName: string; value: string };
+    await svc.updateFieldValue(Number(req.params.id), fieldName, value);
+    return { message: `Field '${fieldName}' updated.` };
+  }));
 
-  app.get("/api/workflows", async (req, res) => {
-    try {
-      const { matter } = req.query as { matter?: string };
-      if (!matter) { res.status(400).json({ ok: false, error: "matter query param required" }); return; }
-      const data = await biznet.get<string[]>("/Workflow/GetMasterWorkflowList", { matter });
-      res.json({ ok: true, data: Array.isArray(data) ? data : [] });
-    } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
-  });
+  app.get("/api/contact-types", route(async () => asList(await svc.listContactTypes())));
 
-  app.post("/api/cases", async (req, res) => {
-    try {
-      const params = req.body as {
-        matterName: string; rootId: number; workflow: string; manager: string;
-        user: string; caseName: string; caseRef?: string; caseNotes?: string;
-        due?: string; isPublic?: boolean; extraClient?: number;
-      };
-      const assignRes = await biznet.post<BiznetResponse<unknown>>(
-        `/Worktypes/AssignMatterType/?matterName=${encodeURIComponent(params.matterName)}&rootId=${params.rootId}`, {}
-      );
-      if (!assignRes.Status) { res.status(400).json({ ok: false, message: assignRes.Message }); return; }
-      const createRes = await biznet.post<BiznetResponse<number>>("/Case/CreateCase", {
-        matterName: params.matterName, workflow: params.workflow, manager: params.manager,
-        user: params.user, caseRef: params.caseRef ?? "", caseNotes: params.caseNotes ?? "",
-        due: params.due ?? "", rootId: params.rootId, isPublic: params.isPublic ?? true,
-        extraClient: params.extraClient ?? 0, extraName: "Partner", caseName: params.caseName,
-      });
-      if (!createRes.Status) { res.status(400).json({ ok: false, message: createRes.Message }); return; }
-      await biznet.post<BiznetResponse<unknown>>(`/Case/SetCaseDefaultPermissions?caseId=${createRes.Argument}`, {}).catch(() => null);
-      res.json({ ok: true, data: createRes.Argument, message: `Case created. ID: ${createRes.Argument}` });
-    } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
-  });
+  app.get("/api/organization-types", route(async () => asList(await svc.listOrganizationTypes())));
 
-  app.get("/api/cases/:id/events", async (req, res) => {
-    try {
-      const data = await biznet.get<unknown[]>("/Events/GetEventsList", { caseId: req.params.id });
-      res.json({ ok: true, data: Array.isArray(data) ? data : [] });
-    } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
-  });
+  app.post("/api/link-objects", route(async (req) => {
+    const { fromId, toId, relation } = req.body as { fromId: number; toId: number; relation?: string };
+    return { data: await svc.linkObjects(fromId, toId, relation) };
+  }));
 
-  app.get("/api/object-types", async (_req, res) => {
-    try {
-      const data = await biznet.get<Array<{ Name: string; Type: string }>>("/Painter/GetRegularCustomTypes");
-      res.json({ ok: true, data: Array.isArray(data) ? data : [] });
-    } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
-  });
+  app.get("/api/workflows", route(async (req) => {
+    const { matter } = req.query as { matter?: string };
+    if (!matter) throw new BiznetApiError("matter query param required");
+    return asList(await svc.listWorkflows(matter));
+  }));
 
-  app.get("/api/object-types/:name/fields", async (req, res) => {
-    try {
-      const data = await biznet.get<unknown>("/Painter/LoadTypeData", { objectType: req.params.name });
-      res.json({ ok: true, data });
-    } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
-  });
+  app.post("/api/cases", route(async (req) => {
+    const caseId = await svc.createCase(req.body as svc.CreateCaseParams);
+    return { data: caseId, message: `Case created. ID: ${caseId}` };
+  }));
 
-  app.post("/api/object-types", async (req, res) => {
-    try {
-      const { name, regular, baseType } = req.body as { name: string; regular?: boolean; baseType?: string };
-      const data = await biznet.post<BiznetResponse<unknown>>("/Painter/CreateType/", { name, regular: regular ?? true, baseType: baseType ?? "" });
-      res.json({ ok: data.Status, data: data.Argument, message: data.Message });
-    } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
-  });
+  app.get("/api/cases/:id/events", route(async (req) => asList(await svc.getCaseEvents(req.params.id))));
 
-  app.get("/api/base-types", async (_req, res) => {
-    try {
-      const data = await biznet.get<string[]>("/Painter/GetBaseTypes");
-      res.json({ ok: true, data: Array.isArray(data) ? data : [] });
-    } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
-  });
+  app.get("/api/object-types", route(async () => asList(await svc.listObjectTypes())));
 
-  app.get("/api/input-forms", async (req, res) => {
-    try {
-      const params: Record<string, string> = {};
-      if (req.query.type) params.type = String(req.query.type);
-      const data = await biznet.get<unknown[]>("/InputForm/GetTypedInputFormList", params);
-      res.json({ ok: true, data: Array.isArray(data) ? data : [] });
-    } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
-  });
+  app.get("/api/object-types/:name/fields", route(async (req) => ({
+    data: await svc.getTypeFields(req.params.name),
+  })));
 
-  app.get("/api/input-forms/:id", async (req, res) => {
-    try {
-      const data = await biznet.get<unknown>("/InputForm/GetFormDetails", { id: req.params.id });
-      res.json({ ok: true, data });
-    } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
-  });
+  app.post("/api/object-types", route(async (req) => {
+    const { name, regular, baseType } = req.body as { name: string; regular?: boolean; baseType?: string };
+    return { data: await svc.createObjectType(name, regular ?? true, baseType ?? "") };
+  }));
 
-  app.post("/api/input-forms", async (req, res) => {
-    try {
-      const { title, objectType, group } = req.body as { title: string; objectType?: string; group?: string };
-      const data = await biznet.post<BiznetResponse<number>>("/InputForm/CreateNewForm", { title, type: objectType ?? "", group: group ?? "" });
-      res.json({ ok: data.Status, data: data.Argument, message: data.Message });
-    } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
-  });
+  app.get("/api/base-types", route(async () => asList(await svc.getBaseTypes())));
 
-  app.post("/api/input-forms/:id/fields", async (req, res) => {
-    try {
-      const { fieldName, fieldType, required, defaultValue, options } = req.body as {
-        fieldName: string; fieldType: string; required?: boolean; defaultValue?: string; options?: string;
-      };
-      const data = await biznet.post<BiznetResponse<unknown>>("/InputForm/SaveFormField", {
-        formId: Number(req.params.id), name: fieldName, type: fieldType,
-        required: required ?? false, defaultValue: defaultValue ?? "", options: options ?? "",
-      });
-      res.json({ ok: data.Status, data: data.Argument, message: data.Message });
-    } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
-  });
+  app.get("/api/input-forms", route(async (req) =>
+    asList(await svc.listInputForms(req.query.type ? String(req.query.type) : undefined))
+  ));
 
-  app.get("/api/departments/:orgId", async (req, res) => {
-    try {
-      const data = await biznet.get<unknown[]>("/Clients/GetDepartmentList", { orgId: req.params.orgId });
-      res.json({ ok: true, data: Array.isArray(data) ? data : [] });
-    } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
-  });
+  app.get("/api/input-forms/:id", route(async (req) => ({ data: await svc.getInputForm(req.params.id) })));
+
+  app.post("/api/input-forms", route(async (req) => {
+    const { title, objectType, group } = req.body as { title: string; objectType?: string; group?: string };
+    return { data: await svc.createInputForm(title, objectType, group) };
+  }));
+
+  app.post("/api/input-forms/:id/fields", route(async (req) => {
+    const { fieldName, fieldType, required, defaultValue, options } = req.body as {
+      fieldName: string; fieldType: string; required?: boolean; defaultValue?: string; options?: string;
+    };
+    return {
+      data: await svc.addFormField({
+        formId: Number(req.params.id), fieldName, fieldType, required, defaultValue, options,
+      }),
+    };
+  }));
+
+  app.get("/api/departments/:orgId", route(async (req) => asList(await svc.getDepartments(req.params.orgId))));
 
   // ─── SSE transport — one session per connection
   const transports = new Map<string, SSEServerTransport>();
