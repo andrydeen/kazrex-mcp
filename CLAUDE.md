@@ -70,6 +70,7 @@ The compiled output goes to `biznet-mcp-server/dist/`. After rebuilding, restart
 | `biznet_get_type_fields` | Get field definitions for a specific object type. |
 | `biznet_create_object_type` | Create a new custom object type. |
 | `biznet_get_base_types` | List available base types to extend when creating a type. |
+| `biznet_update_field` | Set a single field on any object. The only reliable way to save address fields. |
 
 ### Input Forms
 

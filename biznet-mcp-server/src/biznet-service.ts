@@ -32,8 +32,15 @@ export function getContact(id: number | string): Promise<ContactDetail> {
   return biznet.get<ContactDetail>("/Clients/GetCustomerDetails", { id });
 }
 
-export function searchContactsByPhone(phone: string): Promise<IdNameItem[]> {
-  return biznet.get<IdNameItem[]>("/Clients/GetCustomerLookupByPhone", { phone });
+// The CRM returns a bare {Id, Name} object for a single match — normalize to array
+export async function searchContactsByPhone(phone: string): Promise<IdNameItem[]> {
+  const data = await biznet.get<IdNameItem[] | IdNameItem | null>(
+    "/Clients/GetCustomerLookupByPhone",
+    { phone }
+  );
+  if (Array.isArray(data)) return data;
+  if (data && typeof data === "object" && "Id" in data) return [data];
+  return [];
 }
 
 export function listContactTypes(): Promise<string[]> {

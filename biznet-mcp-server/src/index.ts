@@ -736,7 +736,7 @@ async function startHttp(port: number) {
 
   app.get("/api/contacts", route(async () => asList(await svc.listContacts())));
 
-  app.get("/api/contacts/:id", route(async (req) => ({ data: await svc.getContact(req.params.id) })));
+  app.get("/api/contacts/:id", route(async (req) => ({ data: await svc.getContact(String(req.params.id)) })));
 
   app.post("/api/contacts/search/phone", route(async (req) => {
     const { phone } = req.body as { phone: string };
@@ -769,13 +769,13 @@ async function startHttp(port: number) {
     data: await svc.saveOrganization(Number(req.params.id), req.body as svc.OrganizationParams),
   })));
 
-  app.get("/api/contacts/:id/cases", route(async (req) => asList(await svc.listCasesForContact(req.params.id))));
+  app.get("/api/contacts/:id/cases", route(async (req) => asList(await svc.listCasesForContact(String(req.params.id)))));
 
   app.get("/api/case-types", route(async () => asList(await svc.listCaseTypes())));
 
   app.get("/api/users", route(async () => asList(await svc.listUsers())));
 
-  app.get("/api/lookup/:category", route(async (req) => asList(await svc.getLookupList(req.params.category))));
+  app.get("/api/lookup/:category", route(async (req) => asList(await svc.getLookupList(String(req.params.category)))));
 
   app.post("/api/objects/:id/field", route(async (req) => {
     const { fieldName, value } = req.body as { fieldName: string; value: string };
@@ -803,12 +803,12 @@ async function startHttp(port: number) {
     return { data: caseId, message: `Case created. ID: ${caseId}` };
   }));
 
-  app.get("/api/cases/:id/events", route(async (req) => asList(await svc.getCaseEvents(req.params.id))));
+  app.get("/api/cases/:id/events", route(async (req) => asList(await svc.getCaseEvents(String(req.params.id)))));
 
   app.get("/api/object-types", route(async () => asList(await svc.listObjectTypes())));
 
   app.get("/api/object-types/:name/fields", route(async (req) => ({
-    data: await svc.getTypeFields(req.params.name),
+    data: await svc.getTypeFields(String(req.params.name)),
   })));
 
   app.post("/api/object-types", route(async (req) => {
@@ -822,7 +822,7 @@ async function startHttp(port: number) {
     asList(await svc.listInputForms(req.query.type ? String(req.query.type) : undefined))
   ));
 
-  app.get("/api/input-forms/:id", route(async (req) => ({ data: await svc.getInputForm(req.params.id) })));
+  app.get("/api/input-forms/:id", route(async (req) => ({ data: await svc.getInputForm(String(req.params.id)) })));
 
   app.post("/api/input-forms", route(async (req) => {
     const { title, objectType, group } = req.body as { title: string; objectType?: string; group?: string };
@@ -840,7 +840,7 @@ async function startHttp(port: number) {
     };
   }));
 
-  app.get("/api/departments/:orgId", route(async (req) => asList(await svc.getDepartments(req.params.orgId))));
+  app.get("/api/departments/:orgId", route(async (req) => asList(await svc.getDepartments(String(req.params.orgId)))));
 
   // ─── SSE transport — one session per connection
   const transports = new Map<string, SSEServerTransport>();
