@@ -5,12 +5,18 @@ Usage:  biznet_crm(action, **kwargs)
 
 Paste this entire file to Hermes to install/update the biznet_crm skill.
 After installing, Hermes can call:  biznet_crm("list_contacts")
+
+Requires the BIZNET_API_KEY environment variable to be set on the host
+running this skill (the MCP_API_KEY value from Railway). Never hardcode
+the key in this file — it gets committed to git.
 """
+
+import os
 
 import requests
 
 BASE_URL = "https://kazrex-mcp-production.up.railway.app"
-API_KEY  = ec8804b1a5b6b150f5c13fca6bd1b099a6c58e243c6d6101e8ddbf81578ac2ec
+API_KEY = os.environ["BIZNET_API_KEY"]
 HEADERS = {
     "Authorization": f"Bearer {API_KEY}",
     "Content-Type": "application/json",

@@ -1,9 +1,45 @@
 import axios, { AxiosInstance, AxiosError } from "axios";
 import https from "https";
+import tls from "tls";
 
 const BASE_URL = process.env.BIZNET_BASE_URL ?? "https://cust05.isokonbpm.com";
 const USERNAME = process.env.BIZNET_USERNAME ?? "";
 const PASSWORD = process.env.BIZNET_PASSWORD ?? "";
+
+// The CRM serves an expired certificate with a mismatched CN, so standard TLS
+// verification cannot pass. Instead of disabling verification entirely, we pin
+// the known certificate's SHA-256 fingerprint: the expired cert is accepted,
+// but any other certificate (e.g. a man-in-the-middle) is rejected.
+// If the CRM's certificate is legitimately replaced, set BIZNET_CERT_FINGERPRINT.
+const PINNED_CERT_FINGERPRINT =
+  process.env.BIZNET_CERT_FINGERPRINT ??
+  "15:16:FC:34:C6:09:4D:C8:FF:F0:20:DB:B6:26:CB:42:51:3B:C6:49:79:AD:FB:E2:A3:C2:A2:7C:E2:80:AF:5C";
+
+// Pinning must be enforced on the socket after the handshake: with
+// rejectUnauthorized=false, Node records checkServerIdentity failures in
+// socket.authorizationError but does NOT abort the connection.
+class PinnedHttpsAgent extends https.Agent {
+  createConnection(options: unknown, callback: unknown): tls.TLSSocket {
+    const socket = (
+      https.Agent.prototype as unknown as {
+        createConnection(o: unknown, c: unknown): tls.TLSSocket;
+      }
+    ).createConnection.call(this, options, callback);
+    socket.once("secureConnect", () => {
+      const fp = socket.getPeerCertificate().fingerprint256;
+      if (fp !== PINNED_CERT_FINGERPRINT) {
+        socket.destroy(
+          new Error(
+            `TLS certificate fingerprint mismatch for ${BASE_URL}: possible man-in-the-middle. ` +
+              `Expected ${PINNED_CERT_FINGERPRINT}, got ${fp}. ` +
+              `If the CRM's certificate was legitimately replaced, update BIZNET_CERT_FINGERPRINT.`
+          )
+        );
+      }
+    });
+    return socket;
+  }
+}
 
 export interface BiznetResponse<T = unknown> {
   Status: boolean;
@@ -82,7 +118,9 @@ class BiznetClient {
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       maxRedirects: 0,
       validateStatus: (s) => s < 400,
-      httpsAgent: new https.Agent({ rejectUnauthorized: false }),
+      // maxCachedSessions: 0 forces a full TLS handshake on every connection —
+      // resumed sessions don't re-send the certificate, breaking the pin check.
+      httpsAgent: new PinnedHttpsAgent({ rejectUnauthorized: false, maxCachedSessions: 0 }),
     });
   }
 

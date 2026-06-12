@@ -844,13 +844,21 @@ Returns {Id, Name, Ref, Phone, Notes} for each department.`,
 // ─── SERVER STARTUP ───────────────────────────────────────────────────────────
 
 async function startHttp(port: number) {
+  // HTTP mode exposes CRM write access on a public URL — refuse to run unauthenticated
+  const API_KEY = process.env.MCP_API_KEY;
+  if (!API_KEY) {
+    console.error(
+      "FATAL: MCP_API_KEY must be set when running in HTTP mode (PORT is set). " +
+        "Generate one with: openssl rand -hex 32"
+    );
+    process.exit(1);
+  }
+
   const app = express();
   app.use(express.json());
 
-  // Optional Bearer token auth — set MCP_API_KEY on Railway to enable
-  const API_KEY = process.env.MCP_API_KEY;
   app.use((req, res, next) => {
-    if (!API_KEY || req.path === "/health") return next();
+    if (req.path === "/health") return next();
     const auth = req.headers.authorization;
     if (auth !== `Bearer ${API_KEY}`) {
       res.status(401).json({ error: "Unauthorized" });
