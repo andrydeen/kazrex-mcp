@@ -157,6 +157,22 @@ class BiznetClient {
       },
     });
 
+    // A successful BizNet login responds with a 302 redirect away from the
+    // login page. A failed login returns 200 and re-renders /Account/Login.
+    // The server hands out a session cookie either way, so the presence of a
+    // cookie does NOT indicate success — we must check the redirect.
+    const status = loginRes.status;
+    const location = (loginRes.headers["location"] as string | undefined) ?? "";
+    const loginSucceeded =
+      status >= 300 && status < 400 && !/\/Account\/Login/i.test(location);
+
+    if (!loginSucceeded) {
+      throw new Error(
+        `Login failed: BizNet rejected the credentials for user "${USERNAME}". ` +
+          `Check BIZNET_USERNAME and BIZNET_PASSWORD.`
+      );
+    }
+
     const allCookies = [
       ...(pageRes?.headers["set-cookie"] ?? []),
       ...(loginRes.headers["set-cookie"] ?? []),
@@ -165,7 +181,7 @@ class BiznetClient {
     this.cookieHeader = this.extractCookies(allCookies);
 
     if (!this.cookieHeader) {
-      throw new Error("Login failed: no session cookie returned. Check credentials.");
+      throw new Error("Login failed: no session cookie returned.");
     }
 
     this.loggedIn = true;
