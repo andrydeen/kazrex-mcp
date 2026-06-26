@@ -10,6 +10,9 @@ biznet-mcp-server/dist/
 .claude/memory_bank/
 .claude/settings.local.json
 
+# Local MCP config — contains CRM credentials, never commit
+.claude/mcp.json
+
 # Playwright logs
 .playwright-mcp/
 
